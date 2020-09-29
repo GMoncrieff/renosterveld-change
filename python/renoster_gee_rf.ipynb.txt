@@ -1,0 +1,497 @@
+{
+  "nbformat": 4,
+  "nbformat_minor": 0,
+  "metadata": {
+    "colab": {
+      "name": "renoster_gee_rf.ipynb",
+      "provenance": [],
+      "collapsed_sections": []
+    },
+    "kernelspec": {
+      "name": "python3",
+      "display_name": "Python 3"
+    }
+  },
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "BYKoyCQSJF6o"
+      },
+      "source": [
+        "## Change detection in the Overberg Renosterveld between Feb 2016 and Jan 2020.\n",
+        "##### Classification is done using manually collected (using Planet, Google Earth and NGI) training data\n"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "4sTsTRmUJMD0"
+      },
+      "source": [
+        "#### Setup"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "98KUxM19Lfkl"
+      },
+      "source": [
+        "# Import libs\n",
+        "import numpy as np\n",
+        "import pandas as pd\n",
+        "import matplotlib.pyplot as plt"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "JvQ4kBw18F9P"
+      },
+      "source": [
+        "#Initialize earth engine\n",
+        "import ee\n",
+        "try:\n",
+        "    ee.Initialize()\n",
+        "except Exception as e:\n",
+        "    ee.Authenticate()\n",
+        "    ee.Initialize()"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "sIJ-gji08cnD"
+      },
+      "source": [
+        "#study area is limited to the intersection of:\n",
+        "#the east coast renosterveld bioregion\n",
+        "#the overberg municipality\n",
+        "#natural and degraded natural vegetation\n",
+        "\n",
+        "#using these data sources:\n",
+        "#RSA national vegetation map - http://bgis.sanbi.org/SpatialDataset/Detail/1674\n",
+        "#Overberg vegetation transformation layer - #http://bgis.sanbi.org/SpatialDataset/Detail/385"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "IKXdc1NpJd86"
+      },
+      "source": [
+        "#### Define data source\n",
+        "##### Study area mask and training data already uploaded to Earth Engine"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "tOFIoHOd897-"
+      },
+      "source": [
+        "aoi = ee.FeatureCollection('users/glennwithtwons/renosteraoi').first().geometry().convexHull()"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "XWlH39oMwVVV"
+      },
+      "source": [
+        "#Sentinel 2 surface reflectance\n",
+        "s2 = ee.ImageCollection('COPERNICUS/S2')\n",
+        "\n",
+        "#training data\n",
+        "#these are private assets due to sensitivity of data\n",
+        "lost = ee.FeatureCollection(\"users/glennwithtwons/lost\")\n",
+        "renos = ee.FeatureCollection(\"users/glennwithtwons/renosterveld\")\n",
+        "cult = ee.FeatureCollection(\"users/glennwithtwons/cultivated\")\n",
+        "\n",
+        "#mask result to areas that were renosterveld in 2010\n",
+        "mask_2010 = ee.FeatureCollection(\"users/glennwithtwons/renosteraoi\") \\\n",
+        "  .map(lambda feature: feature.set('flag', ee.Number(1))) \\\n",
+        "  .reduceToImage(['flag'],ee.Reducer.first())\n"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "mJrxqXbxNaxy"
+      },
+      "source": [
+        "#set class values for points\n",
+        "# 0 is lost renosterveld (changed from renonsterveld to cultivation between feb 2016 and jan 2020)\n",
+        "def setclass0(feature):\n",
+        "  return feature.set({'class': 0})\n",
+        "\n",
+        "#1  is stable renosterveld\n",
+        "def setclass1(feature):\n",
+        "  return feature.set({'class': 1})\n",
+        "\n",
+        "#2 is is stable cultivation\n",
+        "def setclass2(feature):\n",
+        "  return feature.set({'class': 2})\n",
+        "\n",
+        "\n",
+        "lost = lost.map(setclass0)\n",
+        "renos = renos.map(setclass1)\n",
+        "cult = cult.map(setclass2)\n",
+        "\n",
+        "trainsample = lost.merge(renos).merge(cult)\n"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "UX-M5TyJJgoj"
+      },
+      "source": [
+        "#### Functions"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "HM0FJosONllZ"
+      },
+      "source": [
+        "def addNDVI(image):\n",
+        "  return image.addBands(image.normalizedDifference(['B8', 'B4']).rename(['ndvi']))\n",
+        "\n",
+        "\n",
+        "def addEVI(image):\n",
+        "  return image.addBands(image.expression(\n",
+        "    '2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))', {\n",
+        "      'NIR': image.select('B8'),\n",
+        "      'RED': image.select('B4'),\n",
+        "      'BLUE': image.select('B2')\n",
+        "    }).rename(['evi']))\n",
+        "\n",
+        "def addNDRE(image):\n",
+        "  return image.addBands(image.normalizedDifference(['B8', 'B5']).rename(['ndre']))"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "6fDVzGhaJkIV"
+      },
+      "source": [
+        "#### Prepare S2 images"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "SEjfLGaHN0Pw"
+      },
+      "source": [
+        "# No need to do cloud filtering as \n",
+        "# these dates used were hand chosen to be clear and have good clear skies\n",
+        "s2_2016 = s2 \\\n",
+        "  .filterMetadata('DATATAKE_IDENTIFIER','equals','GS2A_20160206T082122_003264_N02.01')\\\n",
+        "  .filterBounds(aoi)\\\n",
+        "  .select(['B2','B3','B4','B5','B6','B7','B8','B8A','B11','B12']) \\\n",
+        "  .map(addNDVI) \\\n",
+        "  .map(addEVI) \\\n",
+        "  .map(addNDRE) \\\n",
+        "  .mosaic()\n",
+        "                  \n",
+        "s2_2020 = s2 \\\n",
+        "  .filterMetadata('DATATAKE_IDENTIFIER','equals','GS2B_20200111T082219_014876_N02.08')\\\n",
+        "  .filterBounds(aoi) \\\n",
+        "  .select(['B2','B3','B4','B5','B6','B7','B8','B8A','B11','B12']) \\\n",
+        "  .map(addNDVI) \\\n",
+        "  .map(addEVI) \\\n",
+        "  .map(addNDRE) \\\n",
+        "  .mosaic()"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "Y72fpenr12Zz"
+      },
+      "source": [
+        "dist = s2_2020.spectralDistance(s2_2016)\n",
+        "s2all = s2_2016 \\\n",
+        "  .addBands(s2_2020) \\\n",
+        "  .addBands(dist)"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "5Kqkp60uJoVK"
+      },
+      "source": [
+        "#### Prepare training and validation data"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "8oqK5kZzETSK"
+      },
+      "source": [
+        "#split data into folds\n",
+        "fci = ee.FeatureCollection('users/glennwithtwons/renoster_kfold').reduceToImage(properties= ['zone'],reducer= ee.Reducer.first()).rename(['zone'])\n",
+        "#add fold zone to data\n",
+        "trainsample = fci.sampleRegions(\n",
+        "  collection=trainsample,\n",
+        "  properties=['class'],\n",
+        "  scale=10,\n",
+        "  geometries=True\n",
+        ")\n",
+        "#add s2 data\n",
+        "trainsample = s2all.sampleRegions(\n",
+        "  collection=trainsample,\n",
+        "  properties=['class','zone'],\n",
+        "  scale=10,\n",
+        "  geometries=True\n",
+        ")\n"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "TMBdAshQFmWE"
+      },
+      "source": [
+        "# Create and apply classifiers\n",
+        "def kfold(seed):\n",
+        "  #split\n",
+        "  train = trainsample.filter(ee.Filter.neq(\"zone\", seed))\n",
+        "  valid = trainsample.filter(ee.Filter.eq(\"zone\", seed))\n",
+        "  #train\n",
+        "  classifier = ee.Classifier.smileRandomForest(20) \\\n",
+        "  .train(\n",
+        "      features=train, \n",
+        "      classProperty='class', \n",
+        "      inputProperties=s2all.bandNames()\n",
+        "    )\n",
+        "  #apply\n",
+        "  classified = s2all.classify(classifier)\n",
+        "  #asses\n",
+        "  cmat = valid \\\n",
+        "  .classify(classifier) \\\n",
+        "  .errorMatrix('class', 'classification')\n",
+        "  accuracy = cmat.accuracy()\n",
+        "  pa = cmat.producersAccuracy()\n",
+        "  ca = cmat.consumersAccuracy()\n",
+        "\n",
+        "  #add as properties\n",
+        "  classified = classified.setMulti({'acc':accuracy,'pa':pa,'ca':ca})\n",
+        "\n",
+        "  return classified"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "OzdZ2EzLJ_Bu"
+      },
+      "source": [
+        "# 5 fold cv\n",
+        "rf_res = ee.List.sequence(1, 5).map(kfold)\n",
+        "\n",
+        "rf_res = ee.ImageCollection(rf_res);"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "EB1GOXH_KQ0v"
+      },
+      "source": [
+        "acc = rf_res.aggregate_mean('acc').getInfo()\n",
+        "pa = rf_res.aggregate_array('pa').getInfo()\n",
+        "ca = rf_res.aggregate_array('ca').getInfo()"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "GN8VLR0SOlOD"
+      },
+      "source": [
+        "#overall\n",
+        "acc"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "Q6BT4vrNKQ3X"
+      },
+      "source": [
+        "#producers acc\n",
+        "np.mean(pa,axis=0)"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "TeLU0geSQW1Q"
+      },
+      "source": [
+        "#users acc\n",
+        "np.mean(ca,axis=0)"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "R1Gxl1V2V8x6"
+      },
+      "source": [
+        "#final result is modal value\n",
+        "classified = rf_res.mode()"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "R37yRtFfKBEh"
+      },
+      "source": [
+        "#### Export raw classified image"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "OkoPAGfivrd6"
+      },
+      "source": [
+        "#mask to get only changes pxls\n",
+        "class_export = classified \\\n",
+        "  .updateMask(mask_2010) \\\n",
+        "  .eq(0)\n",
+        "classfin = class_export \\\n",
+        "  .updateMask(class_export)"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "0HH3EPEW-WXU"
+      },
+      "source": [
+        "#export before creating vectors\n",
+        "task = ee.batch.Export.image.toAsset(image=classfin,\n",
+        "                                     region=aoi.getInfo()['coordinates'],\n",
+        "                                     description='s2_reno_012016_012020_29sep',\n",
+        "                                     assetId='users/glennwithtwons/classfinR_29sep',\n",
+        "                                     scale=10,\n",
+        "                                     maxPixels=2000000000)\n",
+        "task.start()"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "cUFhdU-L7sfM"
+      },
+      "source": [
+        "task.status()"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "m1TZSSYCKFQX"
+      },
+      "source": [
+        "#### Export sieved image"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "_Lxt9YhvvsUu"
+      },
+      "source": [
+        "#convert to vectors and sieve\n",
+        "classS2 = ee.Image('users/glennwithtwons/classfinR_29sep')\n",
+        "\n",
+        "class_vec = classS2.reduceToVectors(\n",
+        "  geometry=aoi,\n",
+        "  scale=10,\n",
+        "  labelProperty='classification',\n",
+        "  maxPixels=2000000000\n",
+        ")\n",
+        "\n",
+        "# Compute area in m2 directly from the geometry.\n",
+        "def aream2(feature):\n",
+        "  area = feature.geometry().area(maxError=5)\n",
+        "  return feature.set('area', area)\n",
+        "\n",
+        "# filter sizes\n",
+        "class_sieve10 = class_vec \\\n",
+        "  .map(aream2) \\\n",
+        "  .filter(ee.Filter.gt('area', 1000))\n"
+      ],
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "6K4PKkF77KWG"
+      },
+      "source": [
+        "task = ee.batch.Export.table.toDrive(collection=class_sieve10,\n",
+        "                                     description='sieveexport1000',\n",
+        "                                     folder='GEE',\n",
+        "                                     fileNamePrefix='renosterveld_lost1000_29sep',\n",
+        "                                     fileFormat='KML')\n",
+        "task.start()"
+      ],
+      "execution_count": null,
+      "outputs": []
+    }
+  ]
+}
