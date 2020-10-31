@@ -68,16 +68,26 @@ lost <- read_sf("data/change2020.gpkg") %>%
 # figure 1 ----------------------------------------------------------------
 
 ovbnat <- tm_shape(hill,bbox=bb_utm) +
-tm_raster(palette = gray(0:100 / 100), n = 100, legend.show = FALSE,alpha=0.5)  +
+tm_raster(palette = gray(0:100 / 100), n = 100, legend.show = F,alpha=0.5)  +
 tm_shape(zaf,bbox=bb_utm) +
 tm_fill(col="olivedrab3",alpha=0.3) +
 tm_shape(nat,bbox=bb_utm) +
 tm_fill(col="blue",alpha=0.3) +
 tm_shape(ovb,bbox=bb_utm) +
-tm_borders(lwd = 1.5)
+tm_borders(lwd = 1.5)+
+tm_add_legend(
+  type = "fill",
+  labels = c('Renosterveld extent','Overberg region'),
+  col = c('blue',NA),
+  alpha=0.5,
+  border.lwd = c(NA,1.5),
+  border.col='grey40') +
+tm_layout(
+  legend.position = c("right","bottom")
+)
 
 ovbrem <- tm_shape(hill,bbox=bb_utm) +
-tm_raster(palette = gray(0:100 / 100), n = 100, legend.show = FALSE,alpha=0.5)  +
+tm_raster(palette = gray(0:100 / 100), n = 100, legend.show = F,alpha=0.5)  +
 tm_shape(zaf,bbox=bb_utm) +
 tm_fill(col="olivedrab3",alpha=0.3) +
 tm_shape(rem,bbox=bb_utm) +
